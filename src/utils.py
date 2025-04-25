@@ -360,9 +360,15 @@ class Utils:
 
     def switchToNewTab(self, timeToWait: float = 10, closeTab: bool = False) -> None:
         time.sleep(timeToWait)
-        self.webdriver.switch_to.window(window_name=self.webdriver.window_handles[1])
-        if closeTab:
-            self.closeCurrentTab()
+        handles = self.webdriver.window_handles
+        if len(handles) > 1:
+            self.webdriver.switch_to.window(handles[1])
+            logging.info(f"[TAB] Switched to: {self.webdriver.current_url}")
+            if closeTab:
+                self.closeCurrentTab()
+        else:
+            logging.warning("[TAB] Only one tab open — skipping tab switch.")
+
 
     def closeCurrentTab(self) -> None:
         self.webdriver.close()
