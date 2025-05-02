@@ -1,47 +1,35 @@
+"""
+Fallback keyword-based search system for Microsoft Rewards.
+If trend sources fail or are empty, this module generates timestamped,
+educational/randomized search phrases to satisfy the Bing search quota.
+No external API dependency required.
+"""
+
 import dbm.dumb
 import logging
 import shelve
 from enum import Enum, auto
-from random import random, randint
+from random import random, randint, shuffle, choice
 from time import sleep
 from typing import Final
 
 from selenium.webdriver.common.by import By
-from trendspy import Trends
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 from src.browser import Browser
-from src.utils import CONFIG, getProjectRoot, cooldown, COUNTRY
+from src.utils import CONFIG, getProjectRoot, cooldown
+from src.fallback_keywords import generateFallbackKeywords
 
 
 class RetriesStrategy(Enum):
-    """
-    method to use when retrying
-    """
-
     EXPONENTIAL = auto()
-    """
-    an exponentially increasing `backoff-factor` between attempts
-    """
     CONSTANT = auto()
-    """
-    the default; a constant `backoff-factor` between attempts
-    """
 
 
 class Searches:
-    """
-    Class to handle searches in MS Rewards.
-    """
-
     maxRetries: Final[int] = CONFIG.retries.max
-    """
-    the max amount of retries to attempt
-    """
     baseDelay: Final[float] = CONFIG.get("retries.backoff-factor")
-    """
-    how many seconds to delay
-    """
-    # retriesStrategy = Final[  # todo Figure why doesn't work with equality below
     retriesStrategy = RetriesStrategy[CONFIG.retries.strategy]
 
     def __init__(self, browser: Browser):
@@ -58,65 +46,61 @@ class Searches:
         self.googleTrendsShelf.__exit__(None, None, None)
 
     def bingSearches(self) -> None:
-        # Function to perform Bing searches
-        logging.info(
-            f"[BING] Starting {self.browser.browserType.capitalize()} Edge Bing searches..."
-        )
-
+        logging.info(f"[BING] Starting {self.browser.browserType.capitalize()} Edge Bing searches...")
         self.browser.utils.goToSearch()
 
         while True:
-            desktopAndMobileRemaining = self.browser.getRemainingSearches(
-                desktopAndMobile=True
-            )
-            logging.info(f"[BING] Remaining searches={desktopAndMobileRemaining}")
+            remaining = self.browser.getRemainingSearches(desktopAndMobile=True)
+            logging.info(f"[BING] Remaining searches={remaining}")
+
             if (
-                self.browser.browserType == "desktop"
-                and desktopAndMobileRemaining.desktop == 0
+                self.browser.browserType == "desktop" and remaining.desktop == 0
             ) or (
-                self.browser.browserType == "mobile"
-                and desktopAndMobileRemaining.mobile == 0
+                self.browser.browserType == "mobile" and remaining.mobile == 0
             ):
                 break
 
-            if desktopAndMobileRemaining.getTotal() > len(self.googleTrendsShelf):
-                logging.debug(
-                    f"google_trends before load = {list(self.googleTrendsShelf.items())}"
-                )
-                trends = Trends()
-                trends = trends.trending_now(geo=COUNTRY)[
-                    : desktopAndMobileRemaining.getTotal()
-                ]
-                for trend in trends:
-                    self.googleTrendsShelf[trend.keyword] = trend
-                logging.debug(
-                    f"google_trends after load = {list(self.googleTrendsShelf.items())}"
-                )
+            if remaining.getTotal() > len(self.googleTrendsShelf):
+                fallback_keywords = generateFallbackKeywords()
+                for keyword in fallback_keywords:
+                    self.googleTrendsShelf[keyword] = {"trend_keywords": [keyword]}
 
             self.bingSearch()
             sleep(randint(10, 15))
 
-        logging.info(
-            f"[BING] Finished {self.browser.browserType.capitalize()} Edge Bing searches !"
-        )
+        logging.info(f"[BING] Finished {self.browser.browserType.capitalize()} Edge Bing searches!")
+
+    def isSearchSuccessful(self, keyword: str) -> bool:
+        try:
+            WebDriverWait(self.webdriver, 10).until(
+                EC.presence_of_element_located((By.ID, "b_results"))
+            )
+            page_title = self.webdriver.title.lower()
+            return keyword.lower().split()[0] in page_title
+        except Exception as e:
+            logging.warning(f"[BING] Search success check failed: {e}")
+            return False
 
     def bingSearch(self) -> None:
-        # Function to perform a single Bing search
         pointsBefore = self.browser.utils.getAccountPoints()
 
-        trend = list(self.googleTrendsShelf.keys())[0]
-        trendKeywords = self.googleTrendsShelf[trend].trend_keywords
-        logging.debug(f"trendKeywords={trendKeywords}")
+        if not self.googleTrendsShelf:
+            logging.warning("[BING] No trends available to search.")
+            return
+
+        trend = choice(list(self.googleTrendsShelf.keys()))
+        trendKeywords = self.googleTrendsShelf[trend]["trend_keywords"]
+        shuffle(trendKeywords)
         logging.debug(f"trend={trend}")
+        logging.debug(f"shuffled trendKeywords={trendKeywords}")
         baseDelay = Searches.baseDelay
 
         for i in range(self.maxRetries + 1):
             if i != 0:
                 if not trendKeywords:
+                    logging.info(f"[BING] No more keywords for trend '{trend}', removing it.")
                     del self.googleTrendsShelf[trend]
-
-                    trend = list(self.googleTrendsShelf.keys())[0]
-                    trendKeywords = self.googleTrendsShelf[trend].trend_keywords
+                    return
 
                 sleepTime: float
                 if Searches.retriesStrategy == Searches.retriesStrategy.EXPONENTIAL:
@@ -125,34 +109,33 @@ class Searches:
                     sleepTime = baseDelay
                 else:
                     raise AssertionError
-                sleepTime += baseDelay * random()  # Add jitter
-                logging.debug(
-                    f"[BING] Search attempt not counted {i}/{Searches.maxRetries},"
-                    f" sleeping {sleepTime}"
-                    f" seconds..."
-                )
+                sleepTime += baseDelay * random()
+                logging.debug(f"[BING] Retry {i}/{Searches.maxRetries}, sleeping {sleepTime:.2f} seconds...")
                 sleep(sleepTime)
 
+            if not trendKeywords:
+                logging.info(f"[BING] Trend '{trend}' is empty, skipping.")
+                del self.googleTrendsShelf[trend]
+                return
+
             self.browser.utils.goToSearch()
-            searchbar = self.browser.utils.waitUntilClickable(
-                By.ID, "sb_form_q", timeToWait=40
-            )
+            searchbar = self.browser.utils.waitUntilClickable(By.ID, "sb_form_q", timeToWait=40)
             searchbar.clear()
             trendKeyword = trendKeywords.pop(0)
-            logging.debug(f"trendKeyword={trendKeyword}")
+            logging.info(f"[BING] Using trendKeyword: '{trendKeyword}'")
             sleep(1)
             searchbar.send_keys(trendKeyword)
             sleep(1)
             searchbar.submit()
 
             pointsAfter = self.browser.utils.getAccountPoints()
-            if pointsBefore < pointsAfter:
+            searchSuccess = self.isSearchSuccessful(trendKeyword)
+
+            if pointsBefore < pointsAfter or searchSuccess:
+                logging.info(f"[BING] Search succeeded for keyword '{trendKeyword}', removing trend '{trend}'.")
                 del self.googleTrendsShelf[trend]
                 cooldown()
                 return
 
-            # todo
-            # if i == (maxRetries / 2):
-            #     logging.info("[BING] " + "TIMED OUT GETTING NEW PROXY")
-            #     self.webdriver.proxy = self.browser.giveMeProxy()
-        logging.error("[BING] Reached max search attempt retries")
+        logging.error(f"[BING] Reached max retries for trend '{trend}'. Removing it.")
+        del self.googleTrendsShelf[trend]

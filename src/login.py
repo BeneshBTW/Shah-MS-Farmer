@@ -81,19 +81,24 @@ class Login:
             assert self.utils.isLoggedIn()
         except Exception as e:
             logging.error(f"Error during login: {e}")
-            self.webdriver.close()
-            raise
+            if CONFIG.browser.visible:
+                print("[LOGIN] Manual fallback mode: Log in manually in the opened browser window.")
+                input("[LOGIN] Press Enter when you're at the Rewards homepage...")
+            else:
+                self.webdriver.close()
+                raise
 
     def execute_login(self) -> None:
-        # Email field
-        emailField = self.utils.waitUntilVisible(By.ID, "i0116")
-        logging.info("[LOGIN] Entering email...")
-        emailField.click()
-        emailField.send_keys(self.browser.email)
-        assert emailField.get_attribute("value") == self.browser.email
-        self.utils.waitUntilClickable(By.ID, "idSIButton9").click()
+        try:
+            emailField = self.utils.waitUntilVisible(By.ID, "i0116", timeToWait=30)
+            logging.info("[LOGIN] Entering email...")
+            emailField.click()
+            emailField.send_keys(self.browser.email)
+            assert emailField.get_attribute("value") == self.browser.email
+            self.utils.waitUntilClickable(By.ID, "idSIButton9").click()
+        except TimeoutException:
+            raise LoginError("Email field not visible. Login screen may have changed.")
 
-        # Passwordless check
         isPasswordless = False
         with contextlib.suppress(TimeoutException):
             self.utils.waitUntilVisible(By.ID, "displaySign")
@@ -101,7 +106,6 @@ class Login:
         logging.debug("isPasswordless = %s", isPasswordless)
 
         if isPasswordless:
-            # Passworless login, have user confirm code on phone
             codeField = self.utils.waitUntilVisible(By.ID, "displaySign")
             logging.warning(
                 "[LOGIN] Confirm your login with code %s on your phone (you have one minute)!\a",
@@ -115,7 +119,6 @@ class Login:
             self.utils.waitUntilVisible(By.NAME, "kmsiForm", 60)
             logging.info("[LOGIN] Successfully verified!")
         else:
-            # Password-based login, enter password from accounts.json
             passwordField = self.utils.waitUntilClickable(By.NAME, "passwd")
             logging.info("[LOGIN] Entering password...")
             passwordField.click()
@@ -123,7 +126,6 @@ class Login:
             assert passwordField.get_attribute("value") == self.browser.password
             self.utils.waitUntilClickable(By.ID, "idSIButton9").click()
 
-            # Check if 2FA is enabled, both device auth and TOTP are supported
             isDeviceAuthEnabled = False
             with contextlib.suppress(TimeoutException):
                 self.utils.waitUntilVisible(By.ID, "idSpan_SAOTCAS_DescSessionID")
@@ -137,15 +139,12 @@ class Login:
             logging.debug("isTOTPEnabled = %s", isTOTPEnabled)
 
             if isDeviceAuthEnabled:
-                # Device-based authentication not supported
                 raise LoginError(
                     "Device authentication not supported. Please use TOTP or disable 2FA."
                 )
 
             if isTOTPEnabled:
-                # One-time password required
                 if self.browser.totp is not None:
-                    # TOTP token provided
                     logging.info("[LOGIN] Entering OTP...")
                     otp = TOTP(self.browser.totp.replace(" ", "")).now()
                     otpField = self.utils.waitUntilClickable(
@@ -157,11 +156,8 @@ class Login:
                         By.ID, "idSubmit_SAOTCC_Continue"
                     ).click()
                 else:
-                    # TOTP token not provided, manual intervention required
                     assert CONFIG.browser.visible, (
-                        "[LOGIN] 2FA detected, provide token in accounts.json or or run in"
                         "[LOGIN] 2FA detected, provide token in accounts.json or handle manually."
-                        " visible mode to handle login."
                     )
                     print(
                         "[LOGIN] 2FA detected, handle prompts and press enter when on"
@@ -172,11 +168,13 @@ class Login:
         self.check_locked_user()
         self.check_banned_user()
 
-        self.utils.waitUntilVisible(By.NAME, "kmsiForm")
-        self.utils.waitUntilClickable(By.ID, "acceptButton").click()
+        try:
+            self.utils.waitUntilVisible(By.NAME, "kmsiForm", 20)
+            self.utils.waitUntilClickable(By.ID, "acceptButton", 10).click()
+            logging.info("[LOGIN] Clicked 'Stay signed in' confirmation.")
+        except TimeoutException:
+            logging.warning("[LOGIN] 'Stay signed in' prompt not detected — skipping.")
 
-        # TODO: This should probably instead be checked with an element's id,
-        # as the hardcoded text might be different in other languages
         isAskingToProtect = self.utils.checkIfTextPresentAfterDelay(
             "protect your account", 5
         )

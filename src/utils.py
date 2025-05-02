@@ -195,7 +195,7 @@ DEFAULT_CONFIG: Config = Config(
             "level": "INFO",
         },
         "retries": {"backoff-factor": 120, "max": 4, "strategy": "EXPONENTIAL"},
-        "cooldown": {"min": 300, "max": 600},
+        "cooldown": {"min": 20, "max": 45},
         "search": {"type": "both"},
         "accounts": [],
     }
