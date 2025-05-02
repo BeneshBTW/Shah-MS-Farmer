@@ -324,15 +324,22 @@ class Utils:
             return self.getBingInfo()["userInfo"]["balance"]
         return self.getDashboardData()["userStatus"]["availablePoints"]
 
-    def getGoalPoints(self) -> int:
-        if PREFER_BING_INFO:
-            return self.getBingInfo()["flyoutResult"]["userGoal"]["price"]
-        return self.getDashboardData()["userStatus"]["redeemGoal"]["price"]
+    def getGoalPoints(self):
+        bingInfo = self.getBingInfo()
+        try:
+            return bingInfo["flyoutResult"]["userGoal"]["price"]
+        except (TypeError, KeyError):
+            logging.warning("[POINTS] Goal data unavailable — returning 0.")
+            return 0
 
-    def getGoalTitle(self) -> str:
-        if PREFER_BING_INFO:
-            return self.getBingInfo()["flyoutResult"]["userGoal"]["title"]
-        return self.getDashboardData()["userStatus"]["redeemGoal"]["title"]
+    def getGoalTitle(self):
+        bingInfo = self.getBingInfo()
+        try:
+            return bingInfo["flyoutResult"]["userGoal"]["title"]
+        except (TypeError, KeyError):
+            logging.warning("[POINTS] Goal title unavailable — returning 'Unknown Goal'.")
+            return "Unknown Goal"
+
 
     def tryDismissAllMessages(self) -> None:
         byValues = [

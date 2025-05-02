@@ -15,15 +15,11 @@ from src.utils import CONFIG, APPRISE
 
 
 class LoginError(Exception):
-    """
-    Custom exception for login errors.
-    """
+    """Custom exception for login errors."""
 
 
 class Login:
-    """
-    Class to handle login to MS Rewards.
-    """
+    """Class to handle login to MS Rewards."""
     browser: Browser
     webdriver: Chrome
 
@@ -96,6 +92,13 @@ class Login:
             emailField.send_keys(self.browser.email)
             assert emailField.get_attribute("value") == self.browser.email
             self.utils.waitUntilClickable(By.ID, "idSIButton9").click()
+
+            # 🔧 Handle passkey screen if present
+            with contextlib.suppress(TimeoutException):
+                skip_button = self.utils.waitUntilClickable(By.ID, "skip", 5)
+                logging.info("[LOGIN] Skipping passkey login prompt.")
+                skip_button.click()
+
         except TimeoutException:
             raise LoginError("Email field not visible. Login screen may have changed.")
 
