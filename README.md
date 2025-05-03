@@ -22,13 +22,7 @@
 >
 > Do not redeem more than one reward per day.
 
-#### Group Chat - [Telegram](https://t.me/klept0_MS_Rewards_Farmer/) (pay attention to captchas - helps prevent spam)
-
-#### Original bot by [@charlesbel](https://github.com/charlesbel) - refactored/updated/maintained by [@klept0](https://github.com/klept0) and a community of volunteers.
-
-#### PULL REQUESTS ARE WELCOME AND APPRECIATED!
-
-## Installation
+#### It is my version that I updated and fixed to work more efficiently to earn the max points a day not all punch cards are supported yet
 
 [//]: # (todo - add Docker installation instructions)
 
